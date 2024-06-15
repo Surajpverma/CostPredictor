@@ -1,12 +1,9 @@
-import customtkinter
+import os
 import pandas as pd
 from tkinter import filedialog, messagebox
-from openpyxl import Workbook, load_workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
-import os
-
+from PIL import Image
+import customtkinter
 from helpers import get_current_fg_color
-
 
 def create_home_frame(root):
     home_frame = customtkinter.CTkFrame(root, corner_radius=0, fg_color=get_current_fg_color())
@@ -37,50 +34,90 @@ def create_frame(root, name):
     return frame
 
 
-def sort_and_clean_excel(file_path, categories, sorted_output_path, cleaned_output_path):
-    # Load the Excel file
-    excel_data = pd.ExcelFile(file_path)
+def scan_and_create_checkboxes(split_data_frame, input_file_var, categories_frame):
+    input_file = input_file_var.get()
+    if not input_file:
+        messagebox.showerror("Error", "Please select an input file first")
+        return
 
-    # Load the data from the first sheet
-    data = pd.read_excel(file_path, sheet_name=excel_data.sheet_names[0])
+    try:
+        data = pd.read_excel(input_file)
+        categories = data['Category'].unique()
 
-    # Create a dictionary to hold the data for each category
-    category_data = {category: data[data['Category'].str.contains(category, case=False, na=False)] for category in
-                     categories}
+        # Clear previous checkboxes
+        for widget in categories_frame.winfo_children():
+            widget.destroy()
 
-    # Create a new Excel writer object
-    with pd.ExcelWriter(sorted_output_path, engine='xlsxwriter') as writer:
-        # Write each category data to a separate sheet
-        for category, df in category_data.items():
-            df.to_excel(writer, sheet_name=category, index=False)
+        # Create checkboxes for each category
+        category_vars = {}
+        row, col = 0, 0
+        for category in categories:
+            var = customtkinter.StringVar(value="0")
+            checkbox = customtkinter.CTkCheckBox(categories_frame, text=category, variable=var)
+            checkbox.grid(row=row, column=col, padx=10, pady=5, sticky="w")
+            category_vars[category] = var
 
-    # Load the sorted data workbook
-    sorted_excel_data = pd.ExcelFile(sorted_output_path)
+            col += 1
+            if col == 2:
+                col = 0
+                row += 1
 
-    # Process each sheet to remove columns with all null values
-    cleaned_data = {}
-    for sheet_name in sorted_excel_data.sheet_names:
-        df = pd.read_excel(sorted_output_path, sheet_name=sheet_name)
-        cleaned_df = df.dropna(axis=1, how='all')
-        cleaned_data[sheet_name] = cleaned_df
+        return category_vars
 
-    # Create a new Excel writer object for the cleaned data
-    with pd.ExcelWriter(cleaned_output_path, engine='xlsxwriter') as writer:
-        # Write each cleaned category data to a separate sheet
-        for sheet_name, df in cleaned_data.items():
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+    except Exception as e:
+        messagebox.showerror("Error", f"An error occurred while scanning the file: {e}")
 
-    print(f"Sorted data has been saved to {sorted_output_path}")
-    print(f"Cleaned data has been saved to {cleaned_output_path}")
+
+def sort_selected_categories(input_file, output_folder, category_vars):
+    if not input_file or not output_folder:
+        messagebox.showerror("Error", "Please select both input file and output folder")
+        return
+
+    try:
+        sorted_output_path = os.path.join(output_folder, "Sorted_Data.xlsx")
+        cleaned_output_path = os.path.join(output_folder, "Cleaned_Sorted_Data.xlsx")
+
+        # Load the data from the input file
+        data = pd.read_excel(input_file)
+
+        # Filter data by selected categories
+        selected_categories = [category for category, var in category_vars.items() if var.get() == "1"]
+        category_data = {category: data[data['Category'].str.contains(category, case=False, na=False)] for category in
+                         selected_categories}
+
+        # Write sorted data to a new Excel file
+        with pd.ExcelWriter(sorted_output_path, engine='xlsxwriter') as writer:
+            for category, df in category_data.items():
+                df.to_excel(writer, sheet_name=category, index=False)
+
+        # Load the sorted data workbook and remove columns with all null values
+        sorted_excel_data = pd.ExcelFile(sorted_output_path)
+        cleaned_data = {}
+        for sheet_name in sorted_excel_data.sheet_names:
+            df = pd.read_excel(sorted_output_path, sheet_name=sheet_name)
+            cleaned_df = df.dropna(axis=1, how='all')
+            cleaned_data[sheet_name] = cleaned_df
+
+        # Write cleaned data to a new Excel file
+        with pd.ExcelWriter(cleaned_output_path, engine='xlsxwriter') as writer:
+            for sheet_name, df in cleaned_data.items():
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+        messagebox.showinfo("Success",
+                            f"Sorted data has been saved to {sorted_output_path}\nCleaned data has been saved to {cleaned_output_path}")
+
+    except Exception as e:
+        messagebox.showerror("Error", f"An error occurred: {e}")
 
 
 def create_split_data_frame(root):
     split_data_frame = customtkinter.CTkFrame(root, corner_radius=0, fg_color=get_current_fg_color())
     split_data_frame.grid_columnconfigure(0, weight=1)
-    split_data_frame.grid_rowconfigure(6, weight=1)  # Ensure the last row stretches to push buttons to the bottom
+    split_data_frame.grid_rowconfigure(8, weight=1)  # Ensure the last row stretches to push buttons to the bottom
 
     input_file_var = customtkinter.StringVar()
     output_folder_var = customtkinter.StringVar()
+    category_vars = {}
 
     def select_input_file():
         file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
@@ -94,57 +131,32 @@ def create_split_data_frame(root):
             output_folder_var.set(folder_path)
             output_folder_label.configure(text=f"Selected folder: {os.path.basename(folder_path)}")
 
-    def sort_and_clean():
-        input_file = input_file_var.get()
-        output_folder = output_folder_var.get()
+    def scan_and_create():
+        nonlocal category_vars
+        category_vars = scan_and_create_checkboxes(split_data_frame, input_file_var, categories_frame)
 
-        if not input_file or not output_folder:
-            messagebox.showerror("Error", "Please select both input file and output folder")
-            return
-
-        try:
-            sorted_output_path = os.path.join(output_folder, "Sorted_Data.xlsx")
-            cleaned_output_path = os.path.join(output_folder, "Cleaned_Sorted_Data.xlsx")
-
-            # Define the categories to filter
-            categories = ['Doors', 'Walls', 'Ceiling', 'Structural Columns', 'Structural Framing', 'Floor', 'Stairs']
-
-            # Call the sort_and_clean_excel function
-            sort_and_clean_excel(input_file, categories, sorted_output_path, cleaned_output_path)
-
-            messagebox.showinfo("Success",
-                                f"Sorted data has been saved to {sorted_output_path}\nCleaned data has been saved to {cleaned_output_path}")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"An error occurred: {e}")
-
-    # Input file selection
-    customtkinter.CTkLabel(split_data_frame, text="Select input Excel file:").grid(row=0, column=0, padx=20,
-                                                                                   pady=(20, 5), sticky="ew")
-    input_file_button = customtkinter.CTkButton(split_data_frame, text="Browse...", command=select_input_file,
-                                                width=100)
+    customtkinter.CTkLabel(split_data_frame, text="Select input Excel file:").grid(row=0, column=0, padx=20, pady=(20, 5), sticky="ew")
+    input_file_button = customtkinter.CTkButton(split_data_frame, text="Browse...", command=select_input_file, width=100)
     input_file_button.grid(row=1, column=0, padx=20, pady=5, sticky="w")
-    input_file_label = customtkinter.CTkLabel(split_data_frame, text="No file selected",
-                                              text_color=("gray50", "gray50"), wraplength=400)
+    input_file_label = customtkinter.CTkLabel(split_data_frame, text="No file selected", text_color=("gray50", "gray50"), wraplength=400)
     input_file_label.grid(row=1, column=1, padx=20, pady=5, sticky="w")
 
-    # Output folder selection
-    customtkinter.CTkLabel(split_data_frame, text="Select output folder:").grid(row=2, column=0, padx=20, pady=(20, 5),
-                                                                                sticky="ew")
-    output_folder_button = customtkinter.CTkButton(split_data_frame, text="Browse...", command=select_output_path,
-                                                   width=100)
+    customtkinter.CTkLabel(split_data_frame, text="Select output folder:").grid(row=2, column=0, padx=20, pady=(20, 5), sticky="ew")
+    output_folder_button = customtkinter.CTkButton(split_data_frame, text="Browse...", command=select_output_path, width=100)
     output_folder_button.grid(row=3, column=0, padx=20, pady=5, sticky="w")
-    output_folder_label = customtkinter.CTkLabel(split_data_frame, text="No folder selected",
-                                                 text_color=("gray50", "gray50"), wraplength=400)
+    output_folder_label = customtkinter.CTkLabel(split_data_frame, text="No folder selected", text_color=("gray50", "gray50"), wraplength=400)
     output_folder_label.grid(row=3, column=1, padx=20, pady=5, sticky="w")
 
-    # Generate button
-    generate_button = customtkinter.CTkButton(split_data_frame, text="Sort and Clean", command=sort_and_clean,
-                                              width=150)
-    generate_button.grid(row=4, column=0, columnspan=2, padx=20, pady=20, sticky="sew")
+    categories_frame = customtkinter.CTkScrollableFrame(split_data_frame)
+    categories_frame.grid(row=4, column=0, columnspan=2, padx=20, pady=40, sticky="nsew")
+
+    scan_button = customtkinter.CTkButton(split_data_frame, text="Scan and Create Checkboxes", command=scan_and_create, width=150)
+    scan_button.grid(row=5, column=0, columnspan=2, padx=20, pady=20, sticky="sew")
+
+    sort_button = customtkinter.CTkButton(split_data_frame, text="Sort Selected Categories", command=lambda: sort_selected_categories(input_file_var.get(), output_folder_var.get(), category_vars), width=150)
+    sort_button.grid(row=6, column=0, columnspan=2, padx=20, pady=20, sticky="sew")
 
     return split_data_frame
-
 
 def select_frame(frame_name, frames, buttons):
     for frame in frames.values():
@@ -152,7 +164,6 @@ def select_frame(frame_name, frames, buttons):
     frames[frame_name].grid(row=0, column=1, sticky="nsew")
     for button_name, button in buttons.items():
         button.configure(fg_color=("gray75", "gray25") if button_name == frame_name else "transparent")
-
 
 def toggle_theme(frames, theme_toggle_switch):
     current_mode = customtkinter.get_appearance_mode()
