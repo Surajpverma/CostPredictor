@@ -1,5 +1,5 @@
 # This is the compilation of code but actual code is written in a modular way
-# pip install customtkinter pandas openpyxl pillow
+# pip3 install customtkinter pandas openpyxl pillow
 
 
 import customtkinter
