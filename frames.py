@@ -4,6 +4,8 @@ from tkinter import filedialog, messagebox
 from PIL import Image
 import customtkinter
 from helpers import get_current_fg_color
+import numpy as np
+
 
 def create_home_frame(root):
     home_frame = customtkinter.CTkFrame(root, corner_radius=0, fg_color=get_current_fg_color())
@@ -31,7 +33,122 @@ def create_frame(root, name):
     frame.grid_columnconfigure(0, weight=1)
     label = customtkinter.CTkLabel(frame, text=name, text_color=("black", "white"))
     label.grid(row=0, column=0, padx=20, pady=10)
+
+    if name == "Sort":
+        create_sort_section(frame)
+
     return frame
+
+
+def automate_data_processing(raw_data_path, sample_data_path, output_path):
+    # Load the raw data
+    df = pd.read_excel(raw_data_path, sheet_name='Revit Data')
+
+    # List of categories to keep
+    categories_to_keep = [
+        'Ceilings', 'Doors', 'Floors', 'Railings', 'Stairs',
+        'Structural Columns', 'Structural Framing', 'Structural Foundations',
+        'Walls', 'Windows'
+    ]
+
+    # Initialize a dictionary to hold DataFrames for each category
+    category_dfs = {category: df[df['Category'] == category].copy() for category in categories_to_keep}
+
+    # Remove N/A values and replace with NaN
+    for category, category_df in category_dfs.items():
+        category_dfs[category] = category_df.replace('N/A', np.nan)
+
+    # Remove categories that don't contain any parameter values
+    category_dfs = {category: category_df for category, category_df in category_dfs.items() if not category_df.dropna(axis=1, how='all').empty}
+
+    # Load the sample data to determine which parameters to keep
+    sample_excel_data = pd.ExcelFile(sample_data_path)
+    sample_data = {sheet: pd.read_excel(sample_data_path, sheet_name=sheet) for sheet in sample_excel_data.sheet_names}
+    sample_parameters = {sheet: set(df.columns) for sheet, df in sample_data.items()}
+
+    # Remove columns that are not present in the sample data for each corresponding sheet in the cleaned data
+    for category, category_df in category_dfs.items():
+        if category in sample_parameters:
+            params_to_keep = sample_parameters[category]
+            category_dfs[category] = category_df[category_df.columns.intersection(params_to_keep)]
+
+    # Sort each sheet by 'Level' in ascending order, if 'Level' column exists
+    for category, category_df in category_dfs.items():
+        if 'Level' in category_df.columns:
+            category_dfs[category] = category_df.sort_values(by='Level')
+
+    # Save the updated cleaned data
+    with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
+        for category, category_df in category_dfs.items():
+            category_df.to_excel(writer, sheet_name=category, index=False)
+
+
+def create_sort_section(frame):
+    input_file_var = customtkinter.StringVar()
+    sample_file_var = customtkinter.StringVar()
+    output_folder_var = customtkinter.StringVar()
+
+    def select_input_file():
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
+        if file_path:
+            input_file_var.set(file_path)
+            input_file_label.configure(text=f"Selected file: {os.path.basename(file_path)}")
+
+    def select_sample_file():
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
+        if file_path:
+            sample_file_var.set(file_path)
+            sample_file_label.configure(text=f"Selected file: {os.path.basename(file_path)}")
+
+    def select_output_folder():
+        folder_path = filedialog.askdirectory()
+        if folder_path:
+            output_folder_var.set(folder_path)
+            output_folder_label.configure(text=f"Selected folder: {os.path.basename(folder_path)}")
+
+    def process_data():
+        raw_data_path = input_file_var.get()
+        sample_data_path = sample_file_var.get()
+        output_folder = output_folder_var.get()
+
+        if not raw_data_path or not sample_data_path or not output_folder:
+            messagebox.showerror("Error", "Please select all the required files and folder.")
+            return
+
+        output_path = os.path.join(output_folder, "Processed_Data.xlsx")
+
+        try:
+            automate_data_processing(raw_data_path, sample_data_path, output_path)
+            messagebox.showinfo("Success", f"Data has been processed and saved to {output_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {e}")
+
+    customtkinter.CTkLabel(frame, text="Select input Excel file:").grid(row=1, column=0, padx=20, pady=(20, 5),
+                                                                        sticky="ew")
+    input_file_button = customtkinter.CTkButton(frame, text="Browse...", command=select_input_file, width=100)
+    input_file_button.grid(row=2, column=0, padx=20, pady=5, sticky="w")
+    input_file_label = customtkinter.CTkLabel(frame, text="No file selected", text_color=("gray50", "gray50"),
+                                              wraplength=400)
+    input_file_label.grid(row=2, column=1, padx=20, pady=5, sticky="w")
+
+    customtkinter.CTkLabel(frame, text="Select sample Excel file:").grid(row=3, column=0, padx=20, pady=(20, 5),
+                                                                         sticky="ew")
+    sample_file_button = customtkinter.CTkButton(frame, text="Browse...", command=select_sample_file, width=100)
+    sample_file_button.grid(row=4, column=0, padx=20, pady=5, sticky="w")
+    sample_file_label = customtkinter.CTkLabel(frame, text="No file selected", text_color=("gray50", "gray50"),
+                                               wraplength=400)
+    sample_file_label.grid(row=4, column=1, padx=20, pady=5, sticky="w")
+
+    customtkinter.CTkLabel(frame, text="Select output folder:").grid(row=5, column=0, padx=20, pady=(20, 5),
+                                                                     sticky="ew")
+    output_folder_button = customtkinter.CTkButton(frame, text="Browse...", command=select_output_folder, width=100)
+    output_folder_button.grid(row=6, column=0, padx=20, pady=5, sticky="w")
+    output_folder_label = customtkinter.CTkLabel(frame, text="No folder selected", text_color=("gray50", "gray50"),
+                                                 wraplength=400)
+    output_folder_label.grid(row=6, column=1, padx=20, pady=5, sticky="w")
+
+    process_button = customtkinter.CTkButton(frame, text="Process Data", command=process_data, width=150)
+    process_button.grid(row=7, column=0, columnspan=2, padx=20, pady=20, sticky="sew")
 
 
 def scan_and_create_checkboxes(split_data_frame, input_file_var, categories_frame):
@@ -135,28 +252,39 @@ def create_split_data_frame(root):
         nonlocal category_vars
         category_vars = scan_and_create_checkboxes(split_data_frame, input_file_var, categories_frame)
 
-    customtkinter.CTkLabel(split_data_frame, text="Select input Excel file:").grid(row=0, column=0, padx=20, pady=(20, 5), sticky="ew")
-    input_file_button = customtkinter.CTkButton(split_data_frame, text="Browse...", command=select_input_file, width=100)
+    customtkinter.CTkLabel(split_data_frame, text="Select input Excel file:").grid(row=0, column=0, padx=20,
+                                                                                   pady=(20, 5), sticky="ew")
+    input_file_button = customtkinter.CTkButton(split_data_frame, text="Browse...", command=select_input_file,
+                                                width=100)
     input_file_button.grid(row=1, column=0, padx=20, pady=5, sticky="w")
-    input_file_label = customtkinter.CTkLabel(split_data_frame, text="No file selected", text_color=("gray50", "gray50"), wraplength=400)
+    input_file_label = customtkinter.CTkLabel(split_data_frame, text="No file selected",
+                                              text_color=("gray50", "gray50"), wraplength=400)
     input_file_label.grid(row=1, column=1, padx=20, pady=5, sticky="w")
 
-    customtkinter.CTkLabel(split_data_frame, text="Select output folder:").grid(row=2, column=0, padx=20, pady=(20, 5), sticky="ew")
-    output_folder_button = customtkinter.CTkButton(split_data_frame, text="Browse...", command=select_output_path, width=100)
+    customtkinter.CTkLabel(split_data_frame, text="Select output folder:").grid(row=2, column=0, padx=20, pady=(20, 5),
+                                                                                sticky="ew")
+    output_folder_button = customtkinter.CTkButton(split_data_frame, text="Browse...", command=select_output_path,
+                                                   width=100)
     output_folder_button.grid(row=3, column=0, padx=20, pady=5, sticky="w")
-    output_folder_label = customtkinter.CTkLabel(split_data_frame, text="No folder selected", text_color=("gray50", "gray50"), wraplength=400)
+    output_folder_label = customtkinter.CTkLabel(split_data_frame, text="No folder selected",
+                                                 text_color=("gray50", "gray50"), wraplength=400)
     output_folder_label.grid(row=3, column=1, padx=20, pady=5, sticky="w")
 
     categories_frame = customtkinter.CTkScrollableFrame(split_data_frame)
-    categories_frame.grid(row=4, column=0, columnspan=2, padx=20, pady=40, sticky="nsew")
+    categories_frame.grid(row=4, column=0, columnspan=2, padx=20, pady=20, sticky="nsew")
 
-    scan_button = customtkinter.CTkButton(split_data_frame, text="Scan and Create Checkboxes", command=scan_and_create, width=150)
+    scan_button = customtkinter.CTkButton(split_data_frame, text="Scan and Create Checkboxes", command=scan_and_create,
+                                          width=150)
     scan_button.grid(row=5, column=0, columnspan=2, padx=20, pady=20, sticky="sew")
 
-    sort_button = customtkinter.CTkButton(split_data_frame, text="Sort Selected Categories", command=lambda: sort_selected_categories(input_file_var.get(), output_folder_var.get(), category_vars), width=150)
+    sort_button = customtkinter.CTkButton(split_data_frame, text="Sort Selected Categories",
+                                          command=lambda: sort_selected_categories(input_file_var.get(),
+                                                                                   output_folder_var.get(),
+                                                                                   category_vars), width=150)
     sort_button.grid(row=6, column=0, columnspan=2, padx=20, pady=20, sticky="sew")
 
     return split_data_frame
+
 
 def select_frame(frame_name, frames, buttons):
     for frame in frames.values():
@@ -164,6 +292,7 @@ def select_frame(frame_name, frames, buttons):
     frames[frame_name].grid(row=0, column=1, sticky="nsew")
     for button_name, button in buttons.items():
         button.configure(fg_color=("gray75", "gray25") if button_name == frame_name else "transparent")
+
 
 def toggle_theme(frames, theme_toggle_switch):
     current_mode = customtkinter.get_appearance_mode()
